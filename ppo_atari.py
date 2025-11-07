@@ -4,7 +4,11 @@ import random
 import time
 from dataclasses import dataclass
 
+import multiprocessing as mp
+mp.set_start_method("spawn", force=True)  # key fix
+
 import gymnasium as gym
+import ale_py
 import numpy as np
 import torch
 import torch.nn as nn
@@ -13,12 +17,13 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from cleanrl_utils.atari_wrappers import (  # isort:skip
+from atari_wrappers import (  # isort:skip
     ClipRewardEnv,
     EpisodicLifeEnv,
     FireResetEnv,
     MaxAndSkipEnv,
     NoopResetEnv,
+    CropScoreboard,
 )
 
 
@@ -42,7 +47,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "BreakoutNoFrameskip-v4"
+    env_id: str = "ALE/Breakout-v5"
     """the id of the environment"""
     total_timesteps: int = 10000000
     """total timesteps of the experiments"""
@@ -74,7 +79,7 @@ class Args:
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
-    target_kl: float = None
+    target_kl: float = 0.02
     """the target KL divergence threshold"""
 
     # to be filled in runtime
@@ -100,9 +105,10 @@ def make_env(env_id, idx, capture_video, run_name):
         if "FIRE" in env.unwrapped.get_action_meanings():
             env = FireResetEnv(env)
         env = ClipRewardEnv(env)
+        env = CropScoreboard(env)
         env = gym.wrappers.ResizeObservation(env, (84, 84))
-        env = gym.wrappers.GrayScaleObservation(env)
-        env = gym.wrappers.FrameStack(env, 4)
+        env = gym.wrappers.GrayscaleObservation(env)
+        env = gym.wrappers.FrameStackObservation(env, 4)
         return env
 
     return thunk
@@ -176,8 +182,10 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
+    ctx = mp.get_context("spawn")
+    envs = gym.vector.AsyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
+        shared_memory=False,
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -223,13 +231,16 @@ if __name__ == "__main__":
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(next_done).to(device)
-
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+            
+            if "episode" in infos:
+                mask = infos["_episode"]
+                ended = np.nonzero(mask)[0]
+                for i in ended:
+                    r = infos["episode"]["r"][i]
+                    l = infos["episode"]["l"][i]
+                    #print(f"global_step={global_step}, env={i}, r={r}, l={l}")
+                    writer.add_scalar(f"charts/episodic_return", r, global_step)
+                    writer.add_scalar(f"charts/episodic_length", l, global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -325,5 +336,9 @@ if __name__ == "__main__":
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+    # save final trained weights
+    torch.save(agent.state_dict(), f"/scratch/klukasd/ppo_breakout_final.pt")
+
     envs.close()
     writer.close()
+

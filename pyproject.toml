@@ -11,7 +11,14 @@ packages = [
   { include = "so2_equiv_rl" },
 ]
 dependencies = [
-    "numpy (>=2.3.4,<3.0.0)"
+    "numpy (>=2.0,<3.0.0)",
+    "torch (>=2.9.0,<3.0.0)",
+    "gymnasium (>=1.2.2,<2.0.0)",
+    "ale-py (>=0.11.2,<0.12.0)",
+    "tyro (>=0.9.35,<0.10.0)",
+    "tensorboard (>=2.20.0,<3.0.0)",
+    "autorom (>=0.6.1,<0.7.0)",
+    "opencv-python (>=4.12.0.88,<5.0.0.0)"
 ]
 
 [[tool.poetry.packages]]

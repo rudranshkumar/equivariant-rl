@@ -229,6 +229,37 @@ class ClipRewardEnv(gym.RewardWrapper):
         """
         return np.sign(float(reward))
 
+class CropScoreboard(gym.ObservationWrapper[np.ndarray, int, np.ndarray]):
+    """
+    Convert to grayscale and warp frames to 84x84 (default)
+    as done in the Nature paper and later work.
+
+    :param env: Environment to wrap
+    :param width: New frame width
+    :param height: New frame height
+    """
+
+    def __init__(self, env: gym.Env, crop: int = 24) -> None:
+        super().__init__(env)
+        self.crop = crop
+        assert isinstance(env.observation_space, spaces.Box), f"Expected Box space, got {env.observation_space}"
+        self.observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(env.observation_space.shape[0] - crop, env.observation_space.shape[1], env.observation_space.shape[2]),
+            dtype=env.observation_space.dtype,  # type: ignore[arg-type]
+        )
+
+    def observation(self, frame: np.ndarray) -> np.ndarray:
+        """
+        returns the current observation from a frame
+
+        :param frame: environment frame
+        :return: the observation
+        """
+        assert cv2 is not None, "OpenCV is not installed, you can do `pip install opencv-python`"
+        cropped = frame[self.crop:,:,:]
+        return cropped
 
 class WarpFrame(gym.ObservationWrapper[np.ndarray, int, np.ndarray]):
     """
