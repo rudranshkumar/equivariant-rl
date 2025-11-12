@@ -1,4 +1,3 @@
-
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_ataripy
 import os
 os.environ["SDL_VIDEODRIVER"]="dummy"
@@ -18,6 +17,10 @@ import torch.optim as optim
 import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+
+from escnn.nn.init import deltaorthonormal_init
+from escnn import gspaces
+from escnn import nn as enn
 
 from cleanrl_utils.buffers import ReplayBuffer
 
@@ -115,13 +118,13 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "BreakoutNoFrameskip-v4"
     """the id of the environment"""
-    total_timesteps: int = 10000000
+    total_timesteps: int = 1500000
     """total timesteps of the experiments"""
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-5
     """the learning rate of the optimizer"""
     num_envs: int = 1
     """the number of parallel game environments"""
-    buffer_size: int = 1000000
+    buffer_size: int = 100000
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -135,9 +138,9 @@ class Args:
     """the starting epsilon for exploration"""
     end_e: float = 0.01
     """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.10
+    exploration_fraction: float = 0.025
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
-    learning_starts: int = 80000
+    learning_starts: int = 1000 # This was originally at 80,000... interesting.
     """timestep to start learning"""
     train_frequency: int = 4
     """the frequency of training"""
@@ -152,21 +155,41 @@ def make_env():
 class QNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.network = nn.Sequential(
-            nn.Conv2d(12, 32, 7, stride=2, padding=2),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 5, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(3136, 256),
-            nn.ReLU(),
-            nn.Linear(256, env.single_action_space.n),
+        r2_act = gspaces.flipRot2dOnR2(N=4)
+        self.input_type = enn.FieldType(r2_act, 12*[r2_act.trivial_repr])
+        layer1_type = enn.FieldType(r2_act, 8*[r2_act.regular_repr])
+        layer2_type = enn.FieldType(r2_act, 12*[r2_act.regular_repr])
+        layer3_type = enn.FieldType(r2_act, 12*[r2_act.regular_repr])
+        layer4_type = enn.FieldType(r2_act, 32*[r2_act.regular_repr])
+        
+        self.network = enn.SequentialModule(
+            enn.R2Conv(self.input_type, layer1_type, kernel_size=7, stride=2, padding=2, bias=False),
+            enn.ReLU(layer1_type, inplace=True),
+            enn.R2Conv(layer1_type, layer2_type, kernel_size=5, stride=2, padding=1, bias=False),
+            enn.ReLU(layer2_type, inplace=True),
+            enn.R2Conv(layer2_type, layer3_type, kernel_size=5, stride=1, padding=1, bias=False),
+            enn.ReLU(layer3_type, inplace=True),
+            enn.R2Conv(layer3_type, layer4_type, kernel_size=7, stride=1, padding=1, bias=False),
+            enn.ReLU(layer4_type, inplace=True),
+            enn.GroupPooling(layer4_type),
+           #nn.Conv2d(12, 32, 7, stride=2, padding=2),
+           #nn.ReLU(),
+           #nn.Conv2d(32, 64, 5, stride=2, padding=1),
+           #nn.ReLU(),
+           #nn.Conv2d(64, 64, 3, stride=1, padding=1),
+           #nn.ReLU(),
+           #nn.Flatten(),
+           #nn.Linear(3136, 256),
+           #nn.ReLU(),
+           #nn.Linear(256, env.single_action_space.n),
         )
+        self.head = torch.nn.Linear(self.network.out_type.size, 4)
 
     def forward(self, x):
-        return self.network(x / 255.0)
+        x = x.view(-1, 12, 32, 32)/255.
+        x = self.network(self.input_type(x/255.0)).tensor
+        x = x.view(x.size(0), -1)
+        return self.head(x)
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -205,8 +228,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env() for i in range(args.num_envs)]
+    ctx = mp.get_context("spawn")
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env() for i in range(args.num_envs)], shared_memory=False
     )
     #assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -254,6 +278,10 @@ if __name__ == "__main__":
                 print(trunc, True)
                 real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+
+        for idx, term in enumerate(terminations):
+            if term:
+                obs, _ = envs.reset(seed=args.seed)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs

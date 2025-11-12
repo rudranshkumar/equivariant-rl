@@ -114,13 +114,13 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "BreakoutNoFrameskip-v4"
     """the id of the environment"""
-    total_timesteps: int = 10000000
+    total_timesteps: int = 1500000
     """total timesteps of the experiments"""
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-5
     """the learning rate of the optimizer"""
     num_envs: int = 1
     """the number of parallel game environments"""
-    buffer_size: int = 1000000
+    buffer_size: int = 100000
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -134,9 +134,9 @@ class Args:
     """the starting epsilon for exploration"""
     end_e: float = 0.01
     """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.10
+    exploration_fraction: float = 0.025
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
-    learning_starts: int = 80000
+    learning_starts: int = 1000 # This was originally at 80,000... interesting.
     """timestep to start learning"""
     train_frequency: int = 4
     """the frequency of training"""
@@ -204,8 +204,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env() for i in range(args.num_envs)]
+    ctx = mp.get_context("spawn")
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env() for i in range(args.num_envs)], shared_memory=False
     )
     #assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -253,6 +254,10 @@ if __name__ == "__main__":
                 print(trunc, True)
                 real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
+
+        for idx, term in enumerate(terminations):
+            if term:
+                obs, _ = envs.reset(seed=args.seed)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
