@@ -70,6 +70,8 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
+    dihedral_N: int = 4
+    """The resolution of the dihedral group used for the symmetries"""
 
 class FetchObsWrapper(gym.ObservationWrapper):
     """
@@ -166,15 +168,15 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    def __init__(self, env):
+    def __init__(self, env, N=4):
         super().__init__()
-        r2_act = gspaces.flipRot2dOnR2(N=4)
+        r2_act = gspaces.flipRot2dOnR2(N)
         act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
-        if env.observation_space.obs_dim == 19:
-            obs_repr_list = 5*[r2_act.irrep(1, 1), r2_act.triviaL_repr] + 4*[r2_act.trivial_repr]
+        if env.observation_space.shape[1] == 19:
+            obs_repr_list = 5*[r2_act.irrep(1, 1), r2_act.trivial_repr] + 4*[r2_act.trivial_repr]
             self.input_type = enn.FieldType(r2_act, obs_repr_list + act_repr_list)
         else:
-            obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.triviaL_repr]
+            obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.trivial_repr]
             self.input_type = enn.FieldType(r2_act, obs_repr_list + act_repr_list)
         layer1_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
         layer2_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
@@ -183,11 +185,11 @@ class SoftQNetwork(nn.Module):
 
         in_dim =  np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape)
         self.net = nn.Sequential(
-                enn.R2Conv(self.input_type, layer1_type, kernel=1, stride=1, padding=0, initialize=True),
+                enn.R2Conv(self.input_type, layer1_type, kernel_size=1, stride=1, padding=0, initialize=True),
                 enn.ReLU(layer1_type),
-                enn.R2Conv(layer1_type, layer2_type, kernel=1, stride=1, padding=0, initialize=True),
+                enn.R2Conv(layer1_type, layer2_type, kernel_size=1, stride=1, padding=0, initialize=True),
                 enn.ReLU(layer2_type),
-                enn.R2Conv(layer2_type, output_type, kernel=1, stride=1, padding=0, initialize=True)
+                enn.R2Conv(layer2_type, output_type, kernel_size=1, stride=1, padding=0, initialize=True)
                 )
        #self.net = nn.Sequential(
        #        nn.Linear(in_dim, 256),
@@ -199,9 +201,10 @@ class SoftQNetwork(nn.Module):
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
-        x = x.reshape(1, -1, 1, 1)
+        b = x.shape[0]
+        x = x.view(b, -1, 1, 1)
         x = self.input_type(x)
-        x = self.net(x).tensor
+        x = self.net(x).tensor.view(b, -1)
        #x = F.relu(self.fc1(x))
        #x = F.relu(self.fc2(x))
        #x = self.fc3(x)
@@ -213,24 +216,26 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, env):
+    def __init__(self, env, N):
         super().__init__()
-        r2_act = gspaces.flipRot2dOnR2(N=4)
+        r2_act = gspaces.flipRot2dOnR2(N)
         act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
-        if env.observation_space.obs_dim == 19:
-            obs_repr_list = 5*[r2_act.irrep(1, 1), r2_act.triviaL_repr] + 4*[r2_act.trivial_repr]
+        if env.observation_space.shape[1] == 19:
+            obs_repr_list = 5*[r2_act.irrep(1, 1), r2_act.trivial_repr] + 4*[r2_act.trivial_repr]
             self.input_type = enn.FieldType(r2_act, obs_repr_list)
         else:
-            obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.triviaL_repr]
+            obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.trivial_repr]
             self.input_type = enn.FieldType(r2_act, obs_repr_list)
         layer1_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
         layer2_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
         output_type = enn.FieldType(r2_act, act_repr_list)
 
-        self.fc1 = enn.R2Conv(self.input_type,layer1_type, kernel=1, stride=1, padding=0, initialize=True)
-        self.fc2 = enn.R2Conv(layer1_type,layer2_type, kernel=1, stride=1, padding=0, initialize=True)
-        self.fc_mean = enn.R2Conv(layer2_type,output_type, kernel=1, stride=1, padding=0, initialize=True)
-        self.fc_logstd = enn.R2Conv(layer2_type,output_type, kernel=1, stride=1, padding=0, initialize=True)
+        self.fc1 = enn.R2Conv(self.input_type,layer1_type, kernel_size=1, stride=1, padding=0, initialize=True)
+        self.fc1_relu = enn.ReLU(layer1_type)
+        self.fc2 = enn.R2Conv(layer1_type,layer2_type, kernel_size=1, stride=1, padding=0, initialize=True)
+        self.fc2_relu = enn.ReLU(layer2_type)
+        self.fc_mean = enn.R2Conv(layer2_type,output_type, kernel_size=1, stride=1, padding=0, initialize=True)
+        self.fc_logstd = enn.R2Conv(layer2_type,output_type, kernel_size=1, stride=1, padding=0, initialize=True)
         # action rescaling
         self.register_buffer(
             "action_scale",
@@ -248,12 +253,15 @@ class Actor(nn.Module):
         )
 
     def forward(self, x):
-        x = x.reshape(1, -1, 1, 1)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        b = x.shape[0]
+        x = x.reshape(b, -1, 1, 1)
         x = self.input_type(x)
-        x = enn.ReLU(self.fc1(x))
-        x = enn.ReLU(self.fc2(x))
-        mean = self.fc_mean(x).tensor
-        log_std = self.fc_logstd(x).tensor
+        x = self.fc1_relu(self.fc1(x))
+        x = self.fc2_relu(self.fc2(x))
+        mean = self.fc_mean(x).tensor.view(b,-1)
+        log_std = self.fc_logstd(x).tensor.view(b, -1)
         log_std = torch.tanh(log_std)
         log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
 
@@ -313,9 +321,9 @@ if __name__ == "__main__":
 
     max_action = float(envs.single_action_space.high[0])
 
-    actor = Actor(envs).to(device)
-    qf1 = SoftQNetwork(envs).to(device)
-    qf2 = SoftQNetwork(envs).to(device)
+    actor = Actor(envs, args.dihedral_N).to(device)
+    qf1 = SoftQNetwork(envs, args.dihedral_N).to(device)
+    qf2 = SoftQNetwork(envs, args.dihedral_N).to(device)
     qf1_target = SoftQNetwork(envs).to(device)
     qf2_target = SoftQNetwork(envs).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
