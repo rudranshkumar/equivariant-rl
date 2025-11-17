@@ -40,7 +40,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "FetchReachDense-v4"
+    env_id: str = "FetchPushDense-v4"
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
@@ -108,7 +108,7 @@ class FetchObsWrapper(gym.ObservationWrapper):
 
         if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name:
             # goal_rel (3) + object_rel (3) + ee_vel (3) + object_rotation(3) + object_velocity(3)
-            return 15
+            return 19
         
         raise ValueError(f"Unknown Fetch task: {self.env_name}")
 
@@ -138,10 +138,10 @@ class FetchObsWrapper(gym.ObservationWrapper):
             return np.concatenate([goal_rel, 
                                    object_rel, 
                                    ee_vel, 
-                                   grip_pos, 
-                                   grip_vel,
                                    object_rot,
-                                   object_vel]).astype(np.float32)
+                                   object_vel,
+                                   grip_pos, 
+                                   grip_vel]).astype(np.float32)
 
         raise ValueError(f"Unknown Fetch task: {self.env_name}")
 
@@ -166,18 +166,27 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 class SoftQNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.fc1 = nn.Linear(
-            np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape),
-            256,
-        )
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+       #self.fc1 = nn.Linear(
+       #    np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape),
+       #    256,
+       #)
+       #self.fc2 = nn.Linear(256, 256)
+       #self.fc3 = nn.Linear(256, 1)
+        in_dim =  np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape)
+        self.net = nn.Sequential(
+                nn.Linear(in_dim, 256),
+                nn.ReLU(),
+                nn.Linear(256, 256),
+                nn.ReLU(),
+                nn.Linear(256, 1)
+                )
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.net(x)
+       #x = F.relu(self.fc1(x))
+       #x = F.relu(self.fc2(x))
+       #x = self.fc3(x)
         return x
 
 
@@ -188,8 +197,14 @@ LOG_STD_MIN = -5
 class Actor(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
-        self.fc2 = nn.Linear(256, 256)
+        #self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
+        #self.fc2 = nn.Linear(256, 256)
+        in_dim = np.array(env.single_observation_space.shape).prod()
+        self.shared_net = nn.Sequential(
+                    nn.Linear(in_dim, 256),
+                    nn.ReLU(),
+                    nn.Linear(256, 256)
+                )
         self.fc_mean = nn.Linear(256, np.prod(env.single_action_space.shape))
         self.fc_logstd = nn.Linear(256, np.prod(env.single_action_space.shape))
         # action rescaling
@@ -209,8 +224,9 @@ class Actor(nn.Module):
         )
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+        x = self.shared_net(x)
+        #x = F.relu(self.fc1(x))
+        x = F.relu(x)
         mean = self.fc_mean(x)
         log_std = self.fc_logstd(x)
         log_std = torch.tanh(log_std)

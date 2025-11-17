@@ -4,7 +4,11 @@ import random
 import time
 from dataclasses import dataclass
 
+import multiprocessing as mp
+mp.set_start_method("spawn", force=True)  # key fix
+
 import gymnasium as gym
+import gymnasium_robotics
 import numpy as np
 import torch
 import torch.nn as nn
@@ -15,6 +19,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from buffers import ReplayBuffer
 
+from escnn import gspaces
+from escnn import nn as enn
 
 @dataclass
 class Args:
@@ -36,7 +42,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "Hopper-v4"
+    env_id: str = "FetchReachDense-v4"
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
@@ -65,6 +71,83 @@ class Args:
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
 
+class FetchObsWrapper(gym.ObservationWrapper):
+    """
+    Converts absolute coordinates to relative ones depending on the Fetch task.
+    
+    env_name:
+        "FetchReach"
+        "FetchPush"
+        "FetchPickAndPlace"
+        "FetchSlide"
+    """
+
+    def __init__(self, env, env_name: str):
+        super().__init__(env)
+        self.env_name = env_name
+
+        # All Fetch envs expose dict obs
+        base_obs_space = env.observation_space["observation"]
+        goal_space = env.observation_space["desired_goal"]
+
+        # --- Compute final observation dimension dynamically ---
+        self.obs_dim = self._compute_obs_dim()
+        
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.obs_dim,),
+            dtype=np.float32,
+        )
+
+    # ---------------------------------------------------------------------
+    # Step 1: Compute the OUTPUT dimension based on env_name
+    # ---------------------------------------------------------------------
+    def _compute_obs_dim(self):
+        if "FetchReach" in self.env_name:
+            # goal_rel (3) + end_effector_vel (3)
+            return 6
+
+        if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name:
+            # goal_rel (3) + object_rel (3) + ee_vel (3) + object_rotation(3) + object_velocity(3)
+            return 19
+        
+        raise ValueError(f"Unknown Fetch task: {self.env_name}")
+
+    # ---------------------------------------------------------------------
+    # Step 2: Compute RELATIVE observations at runtime
+    # ---------------------------------------------------------------------
+    def observation(self, obs):
+        o = obs["observation"]
+        achieved = obs["achieved_goal"]
+        desired = obs["desired_goal"]
+
+        if "FetchReach" in self.env_name:
+            ee_abs = o[0:3]
+            goal_rel = ee_abs - desired
+            ee_vel = o[5:8]
+            return np.concatenate([goal_rel, ee_vel]).astype(np.float32)
+
+        if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name:
+            ee_abs = o[0:3]
+            goal_rel = ee_abs - desired
+            object_rel = o[6:9]
+            ee_vel = o[20:23]
+            grip_pos = o[9:11]
+            grip_vel = o[23:]
+            object_rot = o[11:14]
+            object_vel = o[14:17]
+            return np.concatenate([goal_rel, 
+                                   object_rel, 
+                                   ee_vel, 
+                                   object_rot,
+                                   object_vel,
+                                   grip_pos, 
+                                   grip_vel]).astype(np.float32)
+
+        raise ValueError(f"Unknown Fetch task: {self.env_name}")
+
+
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
@@ -74,6 +157,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = FetchObsWrapper(env, env_id)
         env.action_space.seed(seed)
         return env
 
@@ -84,18 +168,43 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 class SoftQNetwork(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.fc1 = nn.Linear(
-            np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape),
-            256,
-        )
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+        r2_act = gspaces.flipRot2dOnR2(N=4)
+        act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
+        if env.observation_space.obs_dim == 19:
+            obs_repr_list = 5*[r2_act.irrep(1, 1), r2_act.triviaL_repr] + 4*[r2_act.trivial_repr]
+            self.input_type = enn.FieldType(r2_act, obs_repr_list + act_repr_list)
+        else:
+            obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.triviaL_repr]
+            self.input_type = enn.FieldType(r2_act, obs_repr_list + act_repr_list)
+        layer1_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
+        layer2_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
+        output_type = enn.FieldType(r2_act, 1*[r2_act.trivial_repr])
+
+
+        in_dim =  np.array(env.single_observation_space.shape).prod() + np.prod(env.single_action_space.shape)
+        self.net = nn.Sequential(
+                enn.R2Conv(self.input_type, layer1_type, kernel=1, stride=1, padding=0, initialize=True),
+                enn.ReLU(layer1_type),
+                enn.R2Conv(layer1_type, layer2_type, kernel=1, stride=1, padding=0, initialize=True),
+                enn.ReLU(layer2_type),
+                enn.R2Conv(layer2_type, output_type, kernel=1, stride=1, padding=0, initialize=True)
+                )
+       #self.net = nn.Sequential(
+       #        nn.Linear(in_dim, 256),
+       #        nn.ReLU(),
+       #        nn.Linear(256, 256),
+       #        nn.ReLU(),
+       #        nn.Linear(256, 1)
+       #        )
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = x.reshape(1, -1, 1, 1)
+        x = self.input_type(x)
+        x = self.net(x).tensor
+       #x = F.relu(self.fc1(x))
+       #x = F.relu(self.fc2(x))
+       #x = self.fc3(x)
         return x
 
 
@@ -106,10 +215,22 @@ LOG_STD_MIN = -5
 class Actor(nn.Module):
     def __init__(self, env):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.single_observation_space.shape).prod(), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc_mean = nn.Linear(256, np.prod(env.single_action_space.shape))
-        self.fc_logstd = nn.Linear(256, np.prod(env.single_action_space.shape))
+        r2_act = gspaces.flipRot2dOnR2(N=4)
+        act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
+        if env.observation_space.obs_dim == 19:
+            obs_repr_list = 5*[r2_act.irrep(1, 1), r2_act.triviaL_repr] + 4*[r2_act.trivial_repr]
+            self.input_type = enn.FieldType(r2_act, obs_repr_list)
+        else:
+            obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.triviaL_repr]
+            self.input_type = enn.FieldType(r2_act, obs_repr_list)
+        layer1_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
+        layer2_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
+        output_type = enn.FieldType(r2_act, act_repr_list)
+
+        self.fc1 = enn.R2Conv(self.input_type,layer1_type, kernel=1, stride=1, padding=0, initialize=True)
+        self.fc2 = enn.R2Conv(layer1_type,layer2_type, kernel=1, stride=1, padding=0, initialize=True)
+        self.fc_mean = enn.R2Conv(layer2_type,output_type, kernel=1, stride=1, padding=0, initialize=True)
+        self.fc_logstd = enn.R2Conv(layer2_type,output_type, kernel=1, stride=1, padding=0, initialize=True)
         # action rescaling
         self.register_buffer(
             "action_scale",
@@ -127,10 +248,12 @@ class Actor(nn.Module):
         )
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        mean = self.fc_mean(x)
-        log_std = self.fc_logstd(x)
+        x = x.reshape(1, -1, 1, 1)
+        x = self.input_type(x)
+        x = enn.ReLU(self.fc1(x))
+        x = enn.ReLU(self.fc2(x))
+        mean = self.fc_mean(x).tensor
+        log_std = self.fc_logstd(x).tensor
         log_std = torch.tanh(log_std)
         log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)  # From SpinUp / Denis Yarats
 
@@ -182,7 +305,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
+    ctx = mp.get_context("spawn")
+    envs = gym.vector.AsyncVectorEnv(
         [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
@@ -219,6 +343,9 @@ if __name__ == "__main__":
     )
     start_time = time.time()
 
+    av_r = 0
+    r_num = 0
+
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
@@ -232,20 +359,19 @@ if __name__ == "__main__":
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
+
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if info is not None:
-                    print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                    writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                    writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                    break
+        if "episode" in infos:
+            mask = infos["_episode"]
+            ended = np.nonzero(mask)[0]
+            for i in ended:
+                r = infos["episode"]["r"][i]
+                av_r += (r - av_r)/(r_num+1)
+                r_num += 1
+
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, real_next_obs, actions, rewards, terminations, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
@@ -317,6 +443,11 @@ if __name__ == "__main__":
                     int(global_step / (time.time() - start_time)),
                     global_step,
                 )
+                writer.add_scalar("charts/episodic_return", av_r, global_step)
+                print("Average Reward",flush=True)
+                print(av_r, flush=True)
+                av_r = 0
+                r_num = 0
                 if args.autotune:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
