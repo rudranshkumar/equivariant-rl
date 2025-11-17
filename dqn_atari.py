@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import tyro
-from torch.distributions.categorical import Cate2281991gorical
+from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 from cleanrl_utils.buffers import ReplayBuffer
@@ -224,6 +224,10 @@ if __name__ == "__main__":
     )
     start_time = time.time()
 
+    return_writer = 0
+    length = 0
+    return_v = 0
+
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
@@ -240,13 +244,10 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "episode" in infos:
-       #
-       #    for info in infos["episode"]:
-       #        print(info, flush=True)
-       #        if info and "episode" in info:
-            print(f"global_step={global_step}, episodic_return={infos['episode']['r']}")
-            writer.add_scalar("charts/episodic_return", infos["episode"]["r"], global_step)
-            writer.add_scalar("charts/episodic_length", infos["episode"]["l"], global_step)
+            return_writer += 1
+            length += (infos["episode"]["r"] - length)/(return_writer + 1)
+            return_v += (infos["episode"]["l"] - return_v)/(return_writer + 1)
+
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -272,8 +273,12 @@ if __name__ == "__main__":
                 if global_step % 5000 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                    print("SPS:", int(global_step / (time.time() - start_time)))
                     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                    writer.add_scalar("charts/episodic_return", return_v, global_step)
+                    writer.add_scalar("charts/episodic_length", length, global_step)
+                    return_writer = 0
+                    length = 0
+                    return_v = 0
 
                 # optimize the model
                 optimizer.zero_grad()
