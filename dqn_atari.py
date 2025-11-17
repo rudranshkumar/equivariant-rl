@@ -244,9 +244,9 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "episode" in infos:
-            return_writer += 1
             length += (infos["episode"]["r"] - length)/(return_writer + 1)
             return_v += (infos["episode"]["l"] - return_v)/(return_writer + 1)
+            return_writer += 1
 
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
