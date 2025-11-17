@@ -42,7 +42,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "FetchReacherDense-v4"
+    env_id: str = "FetchReachDense-v4"
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
@@ -72,6 +72,8 @@ class Args:
     """automatic tuning of the entropy coefficient"""
     dihedral_N: int = 4
     """The resolution of the dihedral group used for the symmetries"""
+    reg_rep_N: int = 32
+    """The number of regular rep features in the channel space for the hidden MLP layers"""
 
 class FetchObsWrapper(gym.ObservationWrapper):
     """
@@ -168,7 +170,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    def __init__(self, env, N=4):
+    def __init__(self, env, N=4, N_rr=32):
         super().__init__()
         r2_act = gspaces.flipRot2dOnR2(N)
         act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
@@ -178,8 +180,8 @@ class SoftQNetwork(nn.Module):
         else:
             obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.trivial_repr]
             self.input_type = enn.FieldType(r2_act, obs_repr_list + act_repr_list)
-        layer1_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
-        layer2_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
+        layer1_type = enn.FieldType(r2_act, N_rr*[r2_act.regular_repr])
+        layer2_type = enn.FieldType(r2_act, N_rr*[r2_act.regular_repr])
         output_type = enn.FieldType(r2_act, 1*[r2_act.trivial_repr])
 
 
@@ -216,7 +218,7 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, env, N):
+    def __init__(self, env, N=4, N_rr=32):
         super().__init__()
         r2_act = gspaces.flipRot2dOnR2(N)
         act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
@@ -226,8 +228,8 @@ class Actor(nn.Module):
         else:
             obs_repr_list = 2*[r2_act.irrep(1, 1), r2_act.trivial_repr]
             self.input_type = enn.FieldType(r2_act, obs_repr_list)
-        layer1_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
-        layer2_type = enn.FieldType(r2_act, 128*[r2_act.regular_repr])
+        layer1_type = enn.FieldType(r2_act, N_rr*[r2_act.regular_repr])
+        layer2_type = enn.FieldType(r2_act, N_rr*[r2_act.regular_repr])
         output_type = enn.FieldType(r2_act, act_repr_list)
 
         self.fc1 = enn.R2Conv(self.input_type,layer1_type, kernel_size=1, stride=1, padding=0, initialize=True)
@@ -321,9 +323,9 @@ if __name__ == "__main__":
 
     max_action = float(envs.single_action_space.high[0])
 
-    actor = Actor(envs, args.dihedral_N).to(device)
-    qf1 = SoftQNetwork(envs, args.dihedral_N).to(device)
-    qf2 = SoftQNetwork(envs, args.dihedral_N).to(device)
+    actor = Actor(envs, args.dihedral_N, args.reg_rep_N).to(device)
+    qf1 = SoftQNetwork(envs, args.dihedral_N, args.reg_rep_N).to(device)
+    qf2 = SoftQNetwork(envs, args.dihedral_N, args.reg_rep_N).to(device)
     qf1_target = SoftQNetwork(envs).to(device)
     qf2_target = SoftQNetwork(envs).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
