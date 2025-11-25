@@ -4,6 +4,8 @@ import random
 import time
 from dataclasses import dataclass
 
+import optuna
+
 import multiprocessing as mp
 mp.set_start_method("spawn", force=True)  # key fix
 
@@ -284,9 +286,40 @@ class Actor(nn.Module):
         return action, log_prob, mean
 
 
-if __name__ == "__main__":
+def evaluate_policy(actor, env_id: str, device, n_episodes: int = 10) -> float:
+    """
+    Run the current policy for n_episodes with a deterministic policy (mean action)
+    and return mean episodic return.
+    """
+    eval_env = gym.make(env_id)
+    eval_env = FetchObsWrapper(eval_env, env_id)
 
-    args = tyro.cli(Args)
+    returns = []
+
+    obs, _ = eval_env.reset()
+    for _ in range(n_episodes):
+        done = False
+        ep_ret = 0.0
+        obs, _ = eval_env.reset()
+        while not done:
+            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+            # deterministic: use mean, not sampled action
+            _, _, mean_action = actor.get_action(obs_t)
+            action = mean_action.detach().cpu().numpy()[0]
+            obs, reward, terminated, truncated, info = eval_env.step(action)
+            done = terminated or truncated
+            ep_ret += float(reward)
+        returns.append(ep_ret)
+
+    eval_env.close()
+    return float(np.mean(returns))
+
+
+def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
+    best_eval_return = -float("inf")
+    eval_interval = 10_000
+
+    #args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -326,8 +359,8 @@ if __name__ == "__main__":
     actor = Actor(envs, args.dihedral_N, args.reg_rep_N).to(device)
     qf1 = SoftQNetwork(envs, args.dihedral_N, args.reg_rep_N).to(device)
     qf2 = SoftQNetwork(envs, args.dihedral_N, args.reg_rep_N).to(device)
-    qf1_target = SoftQNetwork(envs).to(device)
-    qf2_target = SoftQNetwork(envs).to(device)
+    qf1_target = SoftQNetwork(envs, args.dihedral_N, args.reg_rep_N).to(device)
+    qf2_target = SoftQNetwork(envs, args.dihedral_N, args.reg_rep_N).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
     q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr)
@@ -355,6 +388,7 @@ if __name__ == "__main__":
 
     av_r = 0
     r_num = 0
+    eval_idx = 0
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -461,5 +495,22 @@ if __name__ == "__main__":
                 if args.autotune:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
+        # ---- EVALUATION BLOCK ----
+        if global_step > 0 and global_step % eval_interval == 0:
+            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=5)
+            best_eval_return = max(best_eval_return, eval_return)
+
+            writer.add_scalar("charts/eval_return", eval_return, global_step)
+            print(f"[step {global_step}] eval_return = {eval_return:.3f}")
+
+            eval_idx += 1
+
+            # If using Optuna, report metric + pruning:
+            if trial is not None:
+                trial.report(eval_return, step=eval_idx)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
     envs.close()
     writer.close()
+    return best_eval_return

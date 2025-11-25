@@ -4,6 +4,8 @@ import random
 import time
 from dataclasses import dataclass
 
+import optuna
+
 import multiprocessing as mp
 mp.set_start_method("spawn", force=True)  # key fix
 
@@ -249,9 +251,40 @@ class Actor(nn.Module):
         return action, log_prob, mean
 
 
-if __name__ == "__main__":
+def evaluate_policy(actor, env_id: str, device, n_episodes: int = 10) -> float:
+    """
+    Run the current policy for n_episodes with a deterministic policy (mean action)
+    and return mean episodic return.
+    """
+    eval_env = gym.make(env_id)
+    eval_env = FetchObsWrapper(eval_env, env_id)
 
-    args = tyro.cli(Args)
+    returns = []
+
+    obs, _ = eval_env.reset()
+    for _ in range(n_episodes):
+        done = False
+        ep_ret = 0.0
+        obs, _ = eval_env.reset()
+        while not done:
+            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+            # deterministic: use mean, not sampled action
+            _, _, mean_action = actor.get_action(obs_t)
+            action = mean_action.detach().cpu().numpy()[0]
+            obs, reward, terminated, truncated, info = eval_env.step(action)
+            done = terminated or truncated
+            ep_ret += float(reward)
+        returns.append(ep_ret)
+
+    eval_env.close()
+    return float(np.mean(returns))
+
+
+def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
+    best_eval_return = -float("inf")
+    eval_interval = 10_000
+
+    #args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -320,6 +353,7 @@ if __name__ == "__main__":
 
     av_r = 0
     r_num = 0
+    eval_idx = 0
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -404,7 +438,7 @@ if __name__ == "__main__":
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
-            if global_step % 100 == 0:
+            if global_step % 1000 == 0:
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
@@ -412,19 +446,39 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/alpha", alpha, global_step)
-                print("SPS:", int(global_step / (time.time() - start_time)))
+                #print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar(
                     "charts/SPS",
                     int(global_step / (time.time() - start_time)),
                     global_step,
                 )
                 writer.add_scalar("charts/episodic_return", av_r, global_step)
-                print("Average Reward",flush=True)
-                print(av_r, flush=True)
+                #print("Average Reward",flush=True)
+                #print(av_r, flush=True)
                 av_r = 0
                 r_num = 0
                 if args.autotune:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
+        # ---- EVALUATION BLOCK ----
+        if global_step > 0 and global_step % eval_interval == 0:
+            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=5)
+            best_eval_return = max(best_eval_return, eval_return)
+
+            writer.add_scalar("charts/eval_return", eval_return, global_step)
+            print(f"[step {global_step}] eval_return = {eval_return:.3f}")
+
+            eval_idx += 1
+
+            # If using Optuna, report metric + pruning:
+            if trial is not None:
+                trial.report(eval_return, step=eval_idx)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+
     envs.close()
     writer.close()
+    return best_eval_return
+
+if __name__ == "__main__":
+    print("Hello World!")
