@@ -10,14 +10,14 @@ def objective(trial: optuna.Trial) -> float:
     gamma     = trial.suggest_float("gamma", 0.95, 0.999)
     tau       = trial.suggest_float("tau", 1e-4, 1e-1, log=True)
     batch_size = trial.suggest_categorical("batch_size", [64, 128, 256])
-    dihedral_N = trial.suggest_categorical("dihedral_N", [4, 8, 16])
-    reg_rep_N = trial.suggest_categorical("reg_rep_N", [16,32,64])
+    dihedral_N = trial.suggest_categorical("dihedral_N", [16, 32])
+    reg_rep_N = trial.suggest_categorical("reg_rep_N", [64, 128])
 
 
     # ---- Build Args object ----
     args = Args(
-        env_id="FetchPushDense-v4",
-        total_timesteps=600_000,   # shorter for tuning
+        env_id="FetchSlideDense-v4",
+        total_timesteps=1_000_000,   # shorter for tuning
         policy_lr=policy_lr,
         q_lr=q_lr,
         gamma=gamma,
@@ -37,8 +37,8 @@ def objective(trial: optuna.Trial) -> float:
 
 
 def main():
-    STUDY_NAME = "sac_equiv_fetch_dense"
-    STORAGE_URL = "sqlite:///sac_equiv_fetch_dense.db"
+    STUDY_NAME = "sac_equiv_fetch_slide_dense"
+    STORAGE_URL = "sqlite:///sac_equiv_fetch_slide_dense.db"
 
     study = optuna.create_study(
         study_name=STUDY_NAME,
@@ -48,7 +48,7 @@ def main():
         sampler=optuna.samplers.TPESampler(multivariate=True),
         pruner=optuna.pruners.MedianPruner(
             n_startup_trials=5,
-            n_warmup_steps=6,
+            n_warmup_steps=8,
         ),
     )
 

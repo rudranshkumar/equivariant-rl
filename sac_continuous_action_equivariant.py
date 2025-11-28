@@ -48,7 +48,7 @@ class Args:
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
-    num_envs: int = 1
+    num_envs: int = 4
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -114,7 +114,7 @@ class FetchObsWrapper(gym.ObservationWrapper):
             # goal_rel (3) + end_effector_vel (3)
             return 6
 
-        if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name:
+        if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name or "FetchSlide" in self.env_name:
             # goal_rel (3) + object_rel (3) + ee_vel (3) + object_rotation(3) + object_velocity(3)
             return 19
         
@@ -134,7 +134,7 @@ class FetchObsWrapper(gym.ObservationWrapper):
             ee_vel = o[5:8]
             return np.concatenate([goal_rel, ee_vel]).astype(np.float32)
 
-        if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name:
+        if "FetchPush" in self.env_name or "FetchPickAndPlace" in self.env_name or "FetchSlide" in self.env_name:
             ee_abs = o[0:3]
             goal_rel = ee_abs - desired
             object_rel = o[6:9]
@@ -317,7 +317,7 @@ def evaluate_policy(actor, env_id: str, device, n_episodes: int = 10) -> float:
 
 def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
     best_eval_return = -float("inf")
-    eval_interval = 10_000
+    eval_interval = 50_000
 
     #args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -473,7 +473,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
-            if global_step % 100 == 0:
+            if global_step % 1000 == 0:
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
@@ -481,15 +481,15 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/alpha", alpha, global_step)
-                print("SPS:", int(global_step / (time.time() - start_time)))
+                #print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar(
                     "charts/SPS",
                     int(global_step / (time.time() - start_time)),
                     global_step,
                 )
                 writer.add_scalar("charts/episodic_return", av_r, global_step)
-                print("Average Reward",flush=True)
-                print(av_r, flush=True)
+                #print("Average Reward",flush=True)
+                #print(av_r, flush=True)
                 av_r = 0
                 r_num = 0
                 if args.autotune:
@@ -497,11 +497,11 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
         # ---- EVALUATION BLOCK ----
         if global_step > 0 and global_step % eval_interval == 0:
-            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=5)
+            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=25)
             best_eval_return = max(best_eval_return, eval_return)
 
             writer.add_scalar("charts/eval_return", eval_return, global_step)
-            print(f"[step {global_step}] eval_return = {eval_return:.3f}")
+            print(f"[step {global_step}] eval_return = {eval_return:.3f}", flush=True)
 
             eval_idx += 1
 

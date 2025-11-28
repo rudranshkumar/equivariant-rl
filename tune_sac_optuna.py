@@ -15,7 +15,7 @@ def objective(trial: optuna.Trial) -> float:
     # ---- Build Args object ----
     args = Args(
         env_id="FetchPushDense-v4",
-        total_timesteps=200_000,   # shorter for tuning
+        total_timesteps=1_000_000,   # shorter for tuning
         policy_lr=policy_lr,
         q_lr=q_lr,
         gamma=gamma,
@@ -51,8 +51,7 @@ def main():
 
     study.optimize(
         objective,
-        n_trials=80,                # runs *new* trials only
-        timeout=60 * 60 * 12,       # optional: stop after 12h
+        n_trials=30,                # runs *new* trials only
     )
 
     print("✅ Best value:", study.best_value)
