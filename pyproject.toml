@@ -12,7 +12,15 @@ requires-python = ">=3.11, <3.12"
 include = "bulletarm"
 from = "BulletArm"
 
-[tool.poetry.group.service_a.dependencies]
+[[tool.poetry.packages]]
+include = "bulletarm_baselines"
+from = "BulletArm"
+
+[[tool.poetry.packages]]
+include = "cleanrl_utils"
+from = "CleanRL"
+
+[tool.poetry.group.bulletarm.dependencies]
 GitPython = "*"
 numpy = ">=1.24.0"
 pybullet = ">=2.7.1"
@@ -26,6 +34,10 @@ dill = "*"
 e2cnn = "^0.2.3"
 matplotlib = "*"
 tensorboard = "*"
+
+[tool.poetry.group.cleanrl_utils.dependencies]
+torch = "^2.2.0"
+gymnasium = "^1.2.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
