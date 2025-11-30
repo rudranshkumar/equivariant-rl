@@ -7,15 +7,25 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.11, <3.12"
-packages = [
-  { include = "so2_equiv_rl" },
-]
-dependencies = [
-    "numpy (>=2.3.4,<3.0.0)"
-]
 
 [[tool.poetry.packages]]
-include = "so2_equiv_rl"
+include = "bulletarm"
+from = "BulletArm"
+
+[tool.poetry.group.service_a.dependencies]
+GitPython = "*"
+numpy = ">=1.24.0"
+pybullet = ">=2.7.1"
+"scikit-image" = ">=0.20.0"
+scipy = ">=1.8.0"
+tqdm = ">=4.31.1"
+"opencv-python" = ">=4.10.0"
+dill = "*"
+"more-itertools" = "*"
+"scikit-learn" = "^1.6.0"
+e2cnn = "^0.2.3"
+matplotlib = "*"
+tensorboard = "*"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
