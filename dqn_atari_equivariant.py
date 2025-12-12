@@ -279,7 +279,7 @@ if __name__ == "__main__":
     return_v = 0
 
     # Evaluation Parameters
-    eval_interval = 5_000
+    eval_interval = 50_000
     eval_idx = 0
     best_eval_return = -float("inf")
 
