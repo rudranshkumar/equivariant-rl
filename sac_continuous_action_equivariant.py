@@ -46,7 +46,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "FetchReachDense-v4"
     """the environment id of the task"""
-    total_timesteps: int = 1000000
+    total_timesteps: int = 3000000
     """total timesteps of the experiments"""
     num_envs: int = 4
     """the number of parallel game environments"""
@@ -318,7 +318,7 @@ def evaluate_policy(actor, env_id: str, device, n_episodes: int = 10) -> float:
 
 def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
     best_eval_return = -float("inf")
-    eval_interval = 50_000
+    eval_interval = 5_000
 
     #args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -498,7 +498,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
         # ---- EVALUATION BLOCK ----
         if global_step > 0 and global_step % eval_interval == 0:
-            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=args.eval_n_episodes)
+            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=100)
             best_eval_return = max(best_eval_return, eval_return)
 
             writer.add_scalar("charts/eval_return", eval_return, global_step)
