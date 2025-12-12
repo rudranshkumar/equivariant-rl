@@ -197,6 +197,32 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
+
+def evaluate_policy(q_network, device, n_episodes: int = 10) -> float:
+    """
+    Run the current policy for n_episodes with a deterministic policy (mean action)
+    and return mean episodic return.
+    """
+    eval_env = make_env()()
+    returns = []
+
+    obs, _ = eval_env.reset()
+    for _ in range(n_episodes):
+        done = False
+        ep_ret = 0.0
+        obs, _ = eval_env.reset()
+        while not done:
+            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+            q_values = q_network(torch.Tensor(obs).to(device))
+            action = int(torch.argmax(q_values, dim=1).cpu().numpy())
+            obs, reward, terminated, truncated, info = eval_env.step(action)
+            done = terminated or truncated
+            ep_ret += float(reward)
+        returns.append(ep_ret)
+    eval_env.close()
+    return float(np.mean(returns))
+
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
@@ -251,6 +277,12 @@ if __name__ == "__main__":
     return_writer = 0
     length = 0
     return_v = 0
+
+    # Evaluation Parameters
+    eval_interval = 5_000
+    eval_idx = 0
+    best_eval_return = -float("inf")
+
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -315,33 +347,16 @@ if __name__ == "__main__":
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data
                     )
 
-            """
-    if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        torch.save(q_network.state_dict(), model_path)
-        print(f"model saved to {model_path}")
-        from cleanrl_utils.evals.dqn_eval import evaluate
+        # ---- EVALUATION BLOCK ----
+        if global_step > args.learning_starts and global_step % eval_interval == 0:
+            eval_return = evaluate_policy(q_network, device, n_episodes=100)
+            best_eval_return = max(best_eval_return, eval_return)
 
-        episodic_returns = evaluate(
-            model_path,
-            make_env,
-            args.env_id,
-            eval_episodes=10,
-            run_name=f"{run_name}-eval",
-            Model=QNetwork,
-            device=device,
-            epsilon=args.end_e,
-        )
-        for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
+            writer.add_scalar("charts/eval_return", eval_return, global_step)
+            print(f"[step {global_step}] eval_return = {eval_return:.3f}", flush=True)
 
-        if args.upload_model:
-            from cleanrl_utils.huggingface import push_to_hub
+            eval_idx += 1
 
-            repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
-            repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
-            push_to_hub(args, episodic_returns, repo_id, "DQN", f"runs/{run_name}", f"videos/{run_name}-eval")
-            """
 
     envs.close()
     writer.close()
