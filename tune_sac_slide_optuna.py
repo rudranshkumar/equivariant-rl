@@ -37,6 +37,7 @@ def main():
     STUDY_NAME = "sac_fetch_slide_dense"
     STORAGE_URL = "sqlite:///sac_fetch_slide_dense.db"
 
+    """
     study = optuna.create_study(
         study_name=STUDY_NAME,
         storage=STORAGE_URL,
@@ -56,6 +57,7 @@ def main():
 
     print("✅ Best value:", study.best_value)
     print("✅ Best params:", study.best_params)
+    """
 
 
 if __name__ == "__main__":
