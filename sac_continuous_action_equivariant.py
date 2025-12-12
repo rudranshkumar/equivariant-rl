@@ -76,6 +76,7 @@ class Args:
     """The resolution of the dihedral group used for the symmetries"""
     reg_rep_N: int = 32
     """The number of regular rep features in the channel space for the hidden MLP layers"""
+    eval_n_episodes: int = 20
 
 class FetchObsWrapper(gym.ObservationWrapper):
     """
@@ -497,7 +498,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
         # ---- EVALUATION BLOCK ----
         if global_step > 0 and global_step % eval_interval == 0:
-            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=25)
+            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=args.eval_n_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 
             writer.add_scalar("charts/eval_return", eval_return, global_step)

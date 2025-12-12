@@ -28,6 +28,7 @@ def objective(trial: optuna.Trial) -> float:
         # IMPORTANT: disable slow logging
         track=False,
         capture_video=False,
+        eval_n_episodes=50,
     )
 
     # ---- Run training ----
@@ -55,7 +56,6 @@ def main():
     study.optimize(
         objective,
         n_trials=30,                # runs *new* trials only
-        timeout=60 * 60 * 47,       # optional: stop after 23.5h
     )
 
     print("✅ Best value:", study.best_value)
