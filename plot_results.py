@@ -96,12 +96,12 @@ if __name__ == "__main__":
     # PPO figure
     ppo_folders = [
         "SAC",
-        "D4 Equivariant SAC",
+        "SAC_Equiv",
     ]
     plot_experiments(
         experiment_folders=ppo_folders,
-        title="Mujoco Push Block",
-        output_file="Fetch.png",
+        title="Gymnasium Robotics Slide",
+        output_file="Slide.png",
         smoothing_window=250,  # tune this as you like
     )
 
