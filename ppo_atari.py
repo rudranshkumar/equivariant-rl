@@ -89,6 +89,10 @@ class Args:
     """the mini-batch size (computed in runtime)"""
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
+    eval_interval: int = 50_000
+    """Frequency of Evaluation Runs"""
+    eval_episodes: int = 1000
+    """Number of evaluations to take the average over"""
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -148,6 +152,42 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
+def evaluate_policy(agent, args, device, n_episodes: int = 10) -> float:
+    """
+    Evaluate PPO agent for n_episodes using a deterministic policy (argmax over logits).
+    Returns mean episodic return.
+    """
+    eval_env = make_env(args.env_id, idx=0, capture_video=False, run_name="eval")()
+    returns = []
+
+    agent.eval()
+    with torch.no_grad():
+        for _ in range(n_episodes):
+            obs, _ = eval_env.reset()
+            done = False
+            ep_ret = 0.0
+
+            while not done:
+                # obs is typically uint8 with shape (4, 84, 84) after FrameStackObservation
+                obs_t = torch.as_tensor(obs, device=device).unsqueeze(0)  # (1, 4, 84, 84)
+
+                # Deterministic action: argmax over policy logits
+                hidden = agent.network(obs_t / 255.0)
+                logits = agent.actor(hidden)                 # (1, n_actions)
+                action = torch.argmax(logits, dim=-1).item() # int
+
+                obs, reward, terminated, truncated, _ = eval_env.step(action)
+                done = terminated or truncated
+                ep_ret += float(reward)
+
+            returns.append(ep_ret)
+
+    eval_env.close()
+    agent.train()
+
+    return float(np.mean(returns))
+
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -206,6 +246,10 @@ if __name__ == "__main__":
     next_obs, _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
+
+     # Evaluation Parameters 
+    best_eval_return = -float("inf")
+    next_eval = 0
 
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -335,6 +379,15 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        # ---- EVALUATION BLOCK ----
+        if global_step >= next_eval:
+            eval_return = evaluate_policy(agent, args, device, n_episodes=args.eval_episodes)
+            best_eval_return = max(best_eval_return, eval_return)
+
+            writer.add_scalar("charts/eval_return", eval_return, global_step)
+            print(f"[step {global_step}] eval_return = {eval_return:.3f}", flush=True)
+    
+            next_eval += args.eval_interval
 
     # save final trained weights
     torch.save(agent.state_dict(), f"/scratch/klukasd/ppo_breakout_final.pt")
