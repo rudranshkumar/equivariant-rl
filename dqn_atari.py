@@ -307,11 +307,12 @@ if __name__ == "__main__":
                 old_val = q_network(data.observations).gather(1, data.actions).squeeze()
                 loss = F.mse_loss(td_target, old_val)
 
-                if global_step % 5000 == 0:
+                if global_step % 20_000 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
                     writer.add_scalar("charts/episodic_return", return_v, global_step)
+                    print(f"Step {global_step} and return {return_v}", flush=True)
                     writer.add_scalar("charts/episodic_length", length, global_step)
                     return_writer = 0
                     length = 0
