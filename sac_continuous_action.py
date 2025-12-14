@@ -46,7 +46,11 @@ class Args:
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
+<<<<<<< HEAD
     num_envs: int = 4
+=======
+    num_envs: int = 8
+>>>>>>> af741e5 (Merging to latest version)
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -54,7 +58,7 @@ class Args:
     """the discount factor gamma"""
     tau: float = 0.005
     """target smoothing coefficient (default: 0.005)"""
-    batch_size: int = 256
+    batch_size: int = 128
     """the batch size of sample from the reply memory"""
     learning_starts: int = 5e3
     """timestep to start learning"""

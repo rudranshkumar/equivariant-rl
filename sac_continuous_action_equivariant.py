@@ -56,7 +56,7 @@ class Args:
     """the discount factor gamma"""
     tau: float = 0.005
     """target smoothing coefficient (default: 0.005)"""
-    batch_size: int = 256
+    batch_size: int = 128
     """the batch size of sample from the reply memory"""
     learning_starts: int = 5e3
     """timestep to start learning"""
@@ -74,7 +74,7 @@ class Args:
     """automatic tuning of the entropy coefficient"""
     dihedral_N: int = 4
     """The resolution of the dihedral group used for the symmetries"""
-    reg_rep_N: int = 32
+    reg_rep_N: int = 16
     """The number of regular rep features in the channel space for the hidden MLP layers"""
     eval_n_episodes: int = 20
 
@@ -173,7 +173,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    def __init__(self, env, N=4, N_rr=32):
+    def __init__(self, env, N=4, N_rr=16):
         super().__init__()
         r2_act = gspaces.flipRot2dOnR2(N)
         act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
@@ -221,7 +221,7 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, env, N=4, N_rr=32):
+    def __init__(self, env, N=4, N_rr=16):
         super().__init__()
         r2_act = gspaces.flipRot2dOnR2(N)
         act_repr_list = [r2_act.irrep(1, 1)] + 2*[r2_act.trivial_repr]
