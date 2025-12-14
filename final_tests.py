@@ -1,5 +1,5 @@
 import argparse
-from sac_continuous_action import Args, train_and_eval
+from sac_continuous_action_equivariant import Args, train_and_eval
 
 # ---------------------------------------------------------
 # Recommended hyperparameters for each task
@@ -13,22 +13,28 @@ EXPERIMENT_CONFIGS = {
         gamma=0.97,
         tau=0.002,
         batch_size=256,
+        dihedral_N=16,
+        reg_rep_N=128
     ),
     "pick": dict(
         env_id="FetchPickAndPlaceDense-v4",
         policy_lr=6e-4,
-        q_lr=1.2e-3,
+        q_lr=5e-4,
         gamma=0.99,
         tau=0.005,
         batch_size=256,
+        dihedral_N=16,
+        reg_rep_N=64
     ),
     "push": dict(
         env_id="FetchPushDense-v4",
         policy_lr=4e-4,
         q_lr=1e-3,
-        gamma=0.97,
+        gamma=0.957,
         tau=0.005,
         batch_size=256,
+        dihedral_N=16,
+        reg_rep_N=64
     ),
 }
 

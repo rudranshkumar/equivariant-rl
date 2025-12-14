@@ -59,7 +59,7 @@ class Args:
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
-    num_envs: int = 4
+    num_envs: int = 1
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -373,6 +373,8 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
+        if global_step % 1000 == 0:
+            print(f"Global step: {global_step}", flush=True)
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
@@ -461,7 +463,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/alpha", alpha, global_step)
-                #print("SPS:", int(global_step / (time.time() - start_time)))
+                print("SPS:", int(global_step / (time.time() - start_time)), flush=True)
                 writer.add_scalar(
                     "charts/SPS",
                     int(global_step / (time.time() - start_time)),
