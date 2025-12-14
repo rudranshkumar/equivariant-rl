@@ -61,7 +61,7 @@ class Args:
     """the environment id of the task"""
     total_timesteps: int = 3000000
     """total timesteps of the experiments"""
-    num_envs: int = 1
+    num_envs: int = 4
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -518,8 +518,6 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 r_num = 0
                 if args.autotune:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
-
-                writer.flush()
 
         # ---- EVALUATION BLOCK ----
         if global_step > 0 and global_step >= eval_step:
