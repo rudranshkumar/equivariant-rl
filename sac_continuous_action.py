@@ -282,7 +282,7 @@ def evaluate_policy(actor, env_id: str, device, n_episodes: int = 10) -> float:
 
 def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
     best_eval_return = -float("inf")
-    eval_interval = 5_000
+    eval_interval = 50_000
 
     #args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"

@@ -1,5 +1,4 @@
 import argparse
-import torch
 from sac_continuous_action import Args, train_and_eval
 
 # ---------------------------------------------------------
