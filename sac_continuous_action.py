@@ -4,6 +4,12 @@ import random
 import time
 from dataclasses import dataclass
 
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"   # macOS Accelerate (harmless elsewhere)
+
 import optuna
 
 import multiprocessing as mp
@@ -20,6 +26,13 @@ import tyro
 from torch.utils.tensorboard import SummaryWriter
 
 from buffers import ReplayBuffer
+
+
+torch.set_num_threads(1)
+try:
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
 
 
 @dataclass
@@ -46,11 +59,7 @@ class Args:
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
-<<<<<<< HEAD
     num_envs: int = 4
-=======
-    num_envs: int = 8
->>>>>>> af741e5 (Merging to latest version)
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -74,6 +83,8 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
+    eval_n_episodes: int = 25
+    """Number of evaluation episodes in a test"""
 
 class FetchObsWrapper(gym.ObservationWrapper):
     """
@@ -255,32 +266,29 @@ class Actor(nn.Module):
         return action, log_prob, mean
 
 
-def evaluate_policy(actor, env_id: str, device, n_episodes: int = 10) -> float:
+def evaluate_policy(actor, eval_env, device, n_episodes: int = 10) -> float:
     """
     Run the current policy for n_episodes with a deterministic policy (mean action)
     and return mean episodic return.
     """
-    eval_env = gym.make(env_id)
-    eval_env = FetchObsWrapper(eval_env, env_id)
 
     returns = []
+    with torch.no_grad():
+        actor.eval()
+        for _ in range(n_episodes):
+            done = False
+            ep_ret = 0.0
+            obs, _ = eval_env.reset()
+            while not done:
+                obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+                # deterministic: use mean, not sampled action
+                _, _, mean_action = actor.get_action(obs_t)
+                action = mean_action.detach().cpu().numpy()[0]
+                obs, reward, terminated, truncated, info = eval_env.step(action)
+                done = terminated or truncated
+                ep_ret += float(reward)
+            returns.append(ep_ret)
 
-    obs, _ = eval_env.reset()
-    for _ in range(n_episodes):
-        done = False
-        ep_ret = 0.0
-        obs, _ = eval_env.reset()
-        while not done:
-            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-            # deterministic: use mean, not sampled action
-            _, _, mean_action = actor.get_action(obs_t)
-            action = mean_action.detach().cpu().numpy()[0]
-            obs, reward, terminated, truncated, info = eval_env.step(action)
-            done = terminated or truncated
-            ep_ret += float(reward)
-        returns.append(ep_ret)
-
-    eval_env.close()
     return float(np.mean(returns))
 
 
@@ -316,6 +324,9 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
+    #eval environment
+    eval_env = gym.make(args.env_id)
+    eval_env = FetchObsWrapper(eval_env, args.env_id)
     # env setup
     ctx = mp.get_context("spawn")
     envs = gym.vector.AsyncVectorEnv(
@@ -357,7 +368,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
     av_r = 0
     r_num = 0
-    eval_idx = 0
+    eval_step = eval_interval
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -366,7 +377,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions, _, _ = actor.get_action(torch.Tensor(obs).to(device))
+            actions, _, _ = actor.get_action(torch.as_tensor(obs, dtype=torch.float32, device=device))
             actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -464,25 +475,23 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 if args.autotune:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
+                writer.flush()
+
         # ---- EVALUATION BLOCK ----
-        if global_step > 0 and global_step % eval_interval == 0:
-            eval_return = evaluate_policy(actor, args.env_id, device, n_episodes=100)
+        if global_step > 0 and global_step >= eval_step:
+            eval_return = evaluate_policy(actor, eval_env, device, n_episodes=args.eval_n_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 
             writer.add_scalar("charts/eval_return", eval_return, global_step)
             print(f"[step {global_step}] eval_return = {eval_return:.3f}", flush=True)
 
-            eval_idx += 1
-
-            # If using Optuna, report metric + pruning:
-            if trial is not None:
-                trial.report(eval_return, step=eval_idx)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
+            eval_step += eval_interval
 
     envs.close()
+    eval_env.close()
     writer.close()
     return best_eval_return
 
 if __name__ == "__main__":
-    print("Hello World!")
+    args = tyro.cli(Args)
+    train_and_eval(args)
