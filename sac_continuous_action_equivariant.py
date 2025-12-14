@@ -61,7 +61,7 @@ class Args:
     """the environment id of the task"""
     total_timesteps: int = 3000000
     """total timesteps of the experiments"""
-    num_envs: int = 4
+    num_envs: int = 1
     """the number of parallel game environments"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -405,11 +405,17 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
     av_r = 0
     r_num = 0
+    write_interval=1000
     eval_step = eval_interval
+    write_step = write_interval
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
+        if global_step % 1000 == 0:
+            print(f"Global step : {global_step}", flush=True)
+
+
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
@@ -490,6 +496,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
+
             if global_step % 1000 == 0:
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
@@ -498,7 +505,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/alpha", alpha, global_step)
-                #print("SPS:", int(global_step / (time.time() - start_time)))
+                print("SPS:", int(global_step / (time.time() - start_time)), flush=True)
                 writer.add_scalar(
                     "charts/SPS",
                     int(global_step / (time.time() - start_time)),
@@ -515,7 +522,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                 writer.flush()
 
         # ---- EVALUATION BLOCK ----
-        if global_step > 0 and global_step  >= eval_step:
+        if global_step > 0 and global_step >= eval_step:
             eval_return = evaluate_policy(actor, eval_env, device, n_episodes=args.eval_n_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 
