@@ -551,7 +551,7 @@ if __name__ == "__main__":
                     done=dones_t[j].numpy(),
                 )
                 transition = normalize_transition(transition)
-                rb.add(transition)
+                rb.add(transition, augment=False)
 
             states_t = copy.copy(next_states_t)
             obs_t = copy.copy(next_obs_t)
