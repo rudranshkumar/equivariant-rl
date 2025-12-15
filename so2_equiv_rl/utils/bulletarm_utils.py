@@ -77,6 +77,7 @@ def so2_augment_close_loop_env(t: Transition) -> Transition:
 
 
 def normalize_transition(t: Transition) -> Transition:
+    return t
     obs = np.clip(t.obs, 0, 0.32)
     obs = obs / 0.4 * 255
     obs = obs.astype(np.uint8)
@@ -97,6 +98,7 @@ def normalize_transition(t: Transition) -> Transition:
 
 
 def denormalize_observation(obs: torch.Tensor) -> torch.Tensor:
+    return obs
     obs = obs.to(torch.float32)
     return obs / 255 * 0.4
 
