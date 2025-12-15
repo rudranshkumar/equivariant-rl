@@ -348,7 +348,6 @@ class Actor(torch.nn.Module):
         mean = torch.cat((inv_act[:, 0:1], dxy, inv_act[:, 1:]), dim=1)
 
         log_std = conv_out[:, self.action_dim :]
-        log_std = torch.tanh(log_std)
         log_std = torch.clamp(log_std, min=LOG_STD_MIN, max=LOG_STD_MAX)
         return mean, log_std
 
