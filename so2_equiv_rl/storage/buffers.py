@@ -103,8 +103,9 @@ class AugReplayBuffer(ReplayBuffer):
         self.aug_n = aug_n
         self.augment_fn = augment_fn
 
-    def add(self, data: Transition) -> None:
+    def add(self, data: Transition, augment: bool = True) -> None:
         super().add(data)
-        for _ in range(self.aug_n):
-            aug_transition = self.augment_fn(data)
-            super().add(aug_transition)
+        if augment:
+            for _ in range(self.aug_n):
+                aug_transition = self.augment_fn(data)
+                super().add(aug_transition)
