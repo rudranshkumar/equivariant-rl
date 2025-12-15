@@ -49,12 +49,6 @@ class Args:
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
-
-    log_interval: int = 1000
-    """log training statistics every N environment steps"""
-
-    compile: bool = False
-    """if toggled, use torch.compile on networks (PyTorch 2+)"""
     # Algorithm specific arguments
     env_id: str = "ALE/Breakout-v5"
     """the id of the environment"""
@@ -100,8 +94,10 @@ class Args:
     """the number of iterations (computed in runtime)"""
     eval_interval: int = 50_000
     """Frequency of Evaluation Runs"""
-    eval_episodes: int = 1000
+    eval_episodes: int = 10
     """Number of evaluations to take the average over"""
+    log_interval: int = 1000
+    """log training progress every N environment steps"""
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -161,12 +157,10 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
-def evaluate_policy(agent, args, device, n_episodes: int = 10) -> float:
-    """
-    Evaluate PPO agent for n_episodes using a deterministic policy (argmax over logits).
+def evaluate_policy(agent, eval_env, device, n_episodes: int = 10) -> float:
+    """Evaluate PPO agent for n_episodes using a deterministic policy (argmax over logits).
     Returns mean episodic return.
     """
-    eval_env = make_env(args.env_id, idx=0, capture_video=False, run_name="eval")()
     returns = []
 
     agent.eval()
@@ -191,10 +185,9 @@ def evaluate_policy(agent, args, device, n_episodes: int = 10) -> float:
 
             returns.append(ep_ret)
 
-    eval_env.close()
     agent.train()
-
     return float(np.mean(returns))
+
 
 
 
@@ -226,11 +219,8 @@ if __name__ == "__main__":
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    if hasattr(torch, 'set_float32_matmul_precision'):
-        torch.set_float32_matmul_precision('high')
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    torch.backends.cudnn.benchmark = not args.torch_deterministic
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
@@ -240,6 +230,8 @@ if __name__ == "__main__":
         shared_memory=False,
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+
+    eval_env = make_env(args.env_id, idx=0, capture_video=False, run_name="eval")()
 
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
@@ -272,6 +264,10 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
+            if global_step % args.log_interval == 0:
+                sps = int(global_step / (time.time() - start_time))
+                print(f"step={global_step} sps={sps}", flush=True)
+                writer.add_scalar("charts/SPS", sps, global_step)
             obs[step] = next_obs
             dones[step] = next_done
 
@@ -393,7 +389,7 @@ if __name__ == "__main__":
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         # ---- EVALUATION BLOCK ----
         if global_step >= next_eval:
-            eval_return = evaluate_policy(agent, args, device, n_episodes=args.eval_episodes)
+            eval_return = evaluate_policy(agent, eval_env, device, n_episodes=args.eval_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 
             writer.add_scalar("charts/eval_return", eval_return, global_step)
@@ -404,6 +400,7 @@ if __name__ == "__main__":
     # save final trained weights
     torch.save(agent.state_dict(), f"/scratch/klukasd/ppo_breakout_final.pt")
 
+    eval_env.close()
     envs.close()
     writer.close()
 
