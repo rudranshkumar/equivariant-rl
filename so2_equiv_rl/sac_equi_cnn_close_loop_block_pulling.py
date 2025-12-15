@@ -88,6 +88,8 @@ class Args:
     # Equivariant Network
     equi_n: int = 8
     """the N in C_N equivariant networks"""
+    n_hidden: int = 64
+    """number of hidden channels in equivariant networks"""
 
     # Environment Configuration
     workspace_size: float = 0.3
@@ -513,12 +515,16 @@ if __name__ == "__main__":
     qfs = TwinSoftQNetworks(
         obs_shape=(2, args.heightmap_size, args.heightmap_size),
         action_dim=len(ACTION_SEQUENCE),
+        N=args.equi_n,
+        n_hidden=args.n_hidden,
     ).to(device)
 
     # target twin soft Q networks construction
     qf_targets = TwinSoftQNetworks(
         obs_shape=(2, args.heightmap_size, args.heightmap_size),
         action_dim=len(ACTION_SEQUENCE),
+        N=args.equi_n,
+        n_hidden=args.n_hidden,
     ).to(device)
     qf_targets.load_state_dict(qfs.state_dict())
 
@@ -531,6 +537,7 @@ if __name__ == "__main__":
         dz=dpos,
         dr=drot,
         N=args.equi_n,
+        n_hidden=args.n_hidden,
     ).to(device)
 
     # optimizers setup
