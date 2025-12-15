@@ -28,6 +28,7 @@ from ple.games.snake import Snake
 from ple import PLE
 from preprocessing.snake_preprocessing import frame_history
 
+from gymnasium.wrappers import TimeLimit
 
 class SnakeEnv(gym.Env):
     def __init__(self, height=32, width=32, fps=15, frame_history_size=4):
@@ -144,6 +145,16 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 4
     """the frequency of training"""
+
+    eval_interval: int = 250_000
+    """How often (in env steps) to run evaluation"""
+    eval_episodes: int = 50
+    """How many evaluation episodes to average over"""
+    log_interval: int = 1000
+    """log training progress every N environment steps"""
+    eval_max_steps: int = 300_000
+    """Maximum length of an evaluation training run"""
+
 def make_env():
     def thunk():
         env = SnakeEnv()
@@ -183,11 +194,11 @@ class QNetwork(nn.Module):
            #nn.ReLU(),
            #nn.Linear(256, env.single_action_space.n),
         )
-        self.head = torch.nn.Linear(self.network.out_type.size, 4)
+        self.head = torch.nn.Linear(self.network.out_type.size, env.single_action_space.n)
 
     def forward(self, x):
-        x = x.view(-1, 12, 32, 32)/255.
-        x = self.network(self.input_type(x/255.0)).tensor
+        x = x.view(-1, 12, 32, 32)
+        x = self.network(self.input_type(x / 255.0)).tensor
         x = x.view(x.size(0), -1)
         return self.head(x)
 
@@ -198,29 +209,31 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 
 
 
-def evaluate_policy(q_network, device, n_episodes: int = 10) -> float:
-    """
-    Run the current policy for n_episodes with a deterministic policy (mean action)
-    and return mean episodic return.
-    """
-    eval_env = make_env()()
+def evaluate_policy(q_network, eval_env, device, n_episodes: int = 10) -> float:
+    """Evaluate with a greedy (argmax-Q) policy and return mean episodic return."""
     returns = []
 
-    obs, _ = eval_env.reset()
-    for _ in range(n_episodes):
-        done = False
-        ep_ret = 0.0
-        obs, _ = eval_env.reset()
-        while not done:
-            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-            q_values = q_network(torch.Tensor(obs).to(device))
-            action = int(torch.argmax(q_values, dim=1).cpu().numpy())
-            obs, reward, terminated, truncated, info = eval_env.step(action)
-            done = terminated or truncated
-            ep_ret += float(reward)
-        returns.append(ep_ret)
-    eval_env.close()
+    q_network.eval()
+    with torch.no_grad():
+        for _ in range(n_episodes):
+            obs, _ = eval_env.reset()
+            done = False
+            ep_ret = 0.0
+
+            while not done:
+                obs_t = torch.as_tensor(obs, device=device, dtype=torch.float32).unsqueeze(0)  # (1, C, H, W)
+                q_values = q_network(obs_t)
+                action = int(torch.argmax(q_values, dim=1).item())
+
+                obs, reward, terminated, truncated, _ = eval_env.step(action)
+                done = terminated or truncated
+                ep_ret += float(reward)
+
+            returns.append(ep_ret)
+
+    q_network.train()
     return float(np.mean(returns))
+
 
 
 if __name__ == "__main__":
@@ -257,7 +270,9 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv(
         [make_env() for i in range(args.num_envs)]
     )
+    eval_env = make_env()()
     #assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    eval_env = TimeLimit(eval_env, max_episode_steps=args.eval_max_steps)
 
     q_network = QNetwork(envs).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=args.learning_rate)
@@ -274,19 +289,16 @@ if __name__ == "__main__":
     )
     start_time = time.time()
 
-    return_writer = 0
-    length = 0
-    return_v = 0
-
     # Evaluation Parameters
-    eval_interval = 50_000
-    eval_idx = 0
+    next_eval = args.eval_interval
     best_eval_return = -float("inf")
-
-
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
     for global_step in range(args.total_timesteps):
+        if global_step % args.log_interval == 0:
+            sps = int(global_step / (time.time() - start_time)) if global_step > 0 else 0
+            print(f"step={global_step} sps={sps}", flush=True)
+            writer.add_scalar("charts/SPS", sps, global_step)
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if random.random() < epsilon:
@@ -300,9 +312,11 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "episode" in infos:
-            length += (infos["episode"]["r"] - length)/(return_writer + 1)
-            return_v += (infos["episode"]["l"] - return_v)/(return_writer + 1)
-            return_writer += 1
+            # envs.num_envs == 1
+            ep_r = infos["episode"]["r"]
+            ep_l = infos["episode"]["l"]
+            writer.add_scalar("charts/episodic_return", ep_r, global_step)
+            writer.add_scalar("charts/episodic_length", ep_l, global_step)
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -329,13 +343,6 @@ if __name__ == "__main__":
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-                    writer.add_scalar("charts/episodic_return", return_v, global_step)
-                    writer.add_scalar("charts/episodic_length", length, global_step)
-                    print(f"Global Step {global_step} and return {return_v}")
-                    return_writer = 0
-                    length = 0
-                    return_v = 0
-
                 # optimize the model
                 optimizer.zero_grad()
                 loss.backward()
@@ -349,15 +356,15 @@ if __name__ == "__main__":
                     )
 
         # ---- EVALUATION BLOCK ----
-        if global_step > args.learning_starts and global_step % eval_interval == 0:
-            eval_return = evaluate_policy(q_network, device, n_episodes=100)
+        if global_step > args.learning_starts and global_step >= next_eval:
+            eval_return = evaluate_policy(q_network, eval_env, device, n_episodes=args.eval_episodes)
             best_eval_return = max(best_eval_return, eval_return)
-
             writer.add_scalar("charts/eval_return", eval_return, global_step)
-            print(f"[step {global_step}] eval_return = {eval_return:.3f}", flush=True)
-
-            eval_idx += 1
+            print(f"[step {global_step}] eval_return = {eval_return:.3f} (best={best_eval_return:.3f})", flush=True)
+            next_eval += args.eval_interval
 
 
     envs.close()
+    if hasattr(eval_env, "close"):
+        eval_env.close()
     writer.close()
