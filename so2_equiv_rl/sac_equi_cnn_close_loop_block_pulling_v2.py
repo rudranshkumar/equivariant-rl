@@ -652,9 +652,7 @@ if __name__ == "__main__":
                             _, log_pi, _ = actor.get_action(
                                 pack_state_obs(data.state, data.obs)
                             )
-                        alpha_loss = (
-                            -log_alpha.exp() * (log_pi + target_entropy)
-                        ).mean()
+                        alpha_loss = (-log_alpha * (log_pi + target_entropy)).mean()
                         a_optimizer.zero_grad()
                         alpha_loss.backward()
                         a_optimizer.step()
