@@ -6,7 +6,7 @@ def main():
     p.add_argument("--batch", required=True)
     p.add_argument("--index", type=int, required=True)
     p.add_argument("--outdir", required=True)
-    p.add_argument("--steps", type=int, default=1_000_000)
+    p.add_argument("--steps", type=int, default=300_000, help="default steps if not in batch item")
     args = p.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -26,14 +26,18 @@ def main():
     env_id = item["env_id"]
     seed = int(item.get("seed", 1))
 
+    # allow per-trial overrides
+    steps = int(item.get("steps", args.steps))
+    outdir = item.get("outdir", args.outdir)
+    os.makedirs(outdir, exist_ok=True)
+
     a = Args(
         env_id=env_id,
-        total_timesteps=args.steps,
+        total_timesteps=steps,
         seed=seed,
         track=False,
         capture_video=False,
-        eval_n_episodes=25,
-        eval_interval=100_000,
+        eval_n_episodes=50,
         **params,
     )
 
@@ -49,6 +53,7 @@ def main():
         "exp": item.get("exp"),
         "env_id": env_id,
         "seed": seed,
+        "steps": steps,
         "params": params,
         "score": score,
         "status": status,
@@ -57,8 +62,8 @@ def main():
         "time_sec": time.time() - start,
     }
 
-    tmp = os.path.join(args.outdir, f".{trial_uid}.tmp")
-    final = os.path.join(args.outdir, f"{trial_uid}.json")
+    tmp = os.path.join(outdir, f".{trial_uid}.tmp")
+    final = os.path.join(outdir, f"{trial_uid}.json")
     with open(tmp, "w") as f:
         json.dump(result, f)
     os.replace(tmp, final)
