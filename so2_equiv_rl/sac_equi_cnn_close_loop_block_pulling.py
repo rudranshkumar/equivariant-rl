@@ -62,6 +62,8 @@ class Args:
     """target smoothing coefficient (default: 0.005)"""
     batch_size: int = 64
     """the batch size of sample from the replay memory"""
+    training_offset: int = 100
+    """the minimal number of transitions to start training"""
     policy_lr: float = 1e-3
     """the learning rate of the policy network optimizer"""
     q_lr: float = 1e-3
@@ -606,9 +608,116 @@ if __name__ == "__main__":
             actions_t, _, _ = actor.get_action(pack_state_obs(s_t, o_t))
 
         # step the env with the action selected by the policy
-        next_states_t, next_obs_t, rewards_t, dones_t = envs.step(
-            actions_t, auto_reset=True
-        )
+        envs.stepAsync(actions_t, auto_reset=True)
+
+        if len(rb) > args.training_offset:
+            data_cpu = rb.sample(args.batch_size, as_tensor=True)
+            data = TransitionBatch(
+                state=data_cpu.state.to(device),
+                obs=denormalize_observation(data_cpu.obs).to(device),
+                action=data_cpu.action.to(device),
+                reward=data_cpu.reward.to(device),
+                next_state=data_cpu.next_state.to(device),
+                next_obs=denormalize_observation(data_cpu.next_obs).to(device),
+                done=data_cpu.done.to(device),
+            )
+
+            with torch.no_grad():
+
+                # get policy actions for next t+1
+                next_state_actions_t, next_state_log_pi_t, _ = actor.get_action(
+                    pack_state_obs(data.next_state, data.next_obs)
+                )
+
+                # compute the target Q value
+                qf1_next_target_t, qf2_next_target_t = qf_targets(
+                    pack_state_obs(data.next_state, data.next_obs),
+                    next_state_actions_t,
+                )
+                min_qf_next_target = (
+                    torch.min(qf1_next_target_t, qf2_next_target_t)
+                    - alpha * next_state_log_pi_t
+                )
+                next_q_value_t = data.reward.flatten() + (
+                    1 - data.done.flatten()
+                ) * args.gamma * (min_qf_next_target).view(-1)
+
+            qf1_a_values_t, qf2_a_values_t = qfs(
+                pack_state_obs(data.state, data.obs), data.action
+            )
+            qf1_a_values_t, qf2_a_values_t = qf1_a_values_t.view(
+                -1
+            ), qf2_a_values_t.view(-1)
+            qf1_loss = F.mse_loss(qf1_a_values_t, next_q_value_t)
+            qf2_loss = F.mse_loss(qf2_a_values_t, next_q_value_t)
+            qf_loss = qf1_loss + qf2_loss
+
+            # optimize the model
+            q_optimizer.zero_grad()
+            qf_loss.backward()
+            q_optimizer.step()
+
+            if global_step % args.policy_frequency == 0:  # TD 3 delayed update support
+                for _ in range(
+                    args.policy_frequency
+                ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
+                    pi_t, log_pi_t, _ = actor.get_action(
+                        pack_state_obs(data.state, data.obs)
+                    )
+                    qf1_pi_t, qf2_pi_t = qfs(pack_state_obs(data.state, data.obs), pi_t)
+                    min_qf_pi_t = torch.min(qf1_pi_t, qf2_pi_t)
+                    actor_loss = ((alpha * log_pi_t) - min_qf_pi_t).mean()
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
+
+                    if args.autotune:
+                        with torch.no_grad():
+                            _, log_pi, _ = actor.get_action(
+                                pack_state_obs(data.state, data.obs)
+                            )
+                        alpha_loss = (
+                            -log_alpha.exp() * (log_pi + target_entropy)
+                        ).mean()
+
+                        a_optimizer.zero_grad()
+                        alpha_loss.backward()
+                        a_optimizer.step()
+                        alpha = log_alpha.exp().item()
+
+            # update the target networks
+            if global_step % args.target_network_frequency == 0:
+                for param, target_param in zip(
+                    qfs.parameters(), qf_targets.parameters()
+                ):
+                    target_param.data.copy_(
+                        args.tau * param.data + (1 - args.tau) * target_param.data
+                    )
+
+            # log training stats
+            if global_step % 100 == 0:
+                writer.add_scalar(
+                    "losses/qf1_values", qf1_a_values_t.mean().item(), global_step
+                )
+                writer.add_scalar(
+                    "losses/qf2_values", qf2_a_values_t.mean().item(), global_step
+                )
+                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
+                writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
+                writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+                writer.add_scalar("losses/alpha", alpha, global_step)
+                print("SPS:", int(global_step / (time.time() - start_time)))
+                writer.add_scalar(
+                    "charts/SPS",
+                    int(global_step / (time.time() - start_time)),
+                    global_step,
+                )
+                if args.autotune:
+                    writer.add_scalar(
+                        "losses/alpha_loss", alpha_loss.item(), global_step
+                    )
+        next_states_t, next_obs_t, rewards_t, dones_t = envs.stepWait()
         rewards = rewards_t.numpy()
         dones = dones_t.numpy()
 
@@ -643,107 +752,6 @@ if __name__ == "__main__":
             rb.add(transition)
 
         states_t, obs_t = next_states_t, next_obs_t
-
-        data_cpu = rb.sample(args.batch_size, as_tensor=True)
-        data = TransitionBatch(
-            state=data_cpu.state.to(device),
-            obs=denormalize_observation(data_cpu.obs).to(device),
-            action=data_cpu.action.to(device),
-            reward=data_cpu.reward.to(device),
-            next_state=data_cpu.next_state.to(device),
-            next_obs=denormalize_observation(data_cpu.next_obs).to(device),
-            done=data_cpu.done.to(device),
-        )
-
-        with torch.no_grad():
-
-            # get policy actions for next t+1
-            next_state_actions_t, next_state_log_pi_t, _ = actor.get_action(
-                pack_state_obs(data.next_state, data.next_obs)
-            )
-
-            # compute the target Q value
-            qf1_next_target_t, qf2_next_target_t = qf_targets(
-                pack_state_obs(data.next_state, data.next_obs),
-                next_state_actions_t,
-            )
-            min_qf_next_target = (
-                torch.min(qf1_next_target_t, qf2_next_target_t)
-                - alpha * next_state_log_pi_t
-            )
-            next_q_value_t = data.reward.flatten() + (
-                1 - data.done.flatten()
-            ) * args.gamma * (min_qf_next_target).view(-1)
-
-        qf1_a_values_t, qf2_a_values_t = qfs(
-            pack_state_obs(data.state, data.obs), data.action
-        )
-        qf1_a_values_t, qf2_a_values_t = qf1_a_values_t.view(-1), qf2_a_values_t.view(
-            -1
-        )
-        qf1_loss = F.mse_loss(qf1_a_values_t, next_q_value_t)
-        qf2_loss = F.mse_loss(qf2_a_values_t, next_q_value_t)
-        qf_loss = qf1_loss + qf2_loss
-
-        # optimize the model
-        q_optimizer.zero_grad()
-        qf_loss.backward()
-        q_optimizer.step()
-
-        if global_step % args.policy_frequency == 0:  # TD 3 delayed update support
-            for _ in range(
-                args.policy_frequency
-            ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
-                pi_t, log_pi_t, _ = actor.get_action(
-                    pack_state_obs(data.state, data.obs)
-                )
-                qf1_pi_t, qf2_pi_t = qfs(pack_state_obs(data.state, data.obs), pi_t)
-                min_qf_pi_t = torch.min(qf1_pi_t, qf2_pi_t)
-                actor_loss = ((alpha * log_pi_t) - min_qf_pi_t).mean()
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
-
-                if args.autotune:
-                    with torch.no_grad():
-                        _, log_pi, _ = actor.get_action(
-                            pack_state_obs(data.state, data.obs)
-                        )
-                    alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
-
-                    a_optimizer.zero_grad()
-                    alpha_loss.backward()
-                    a_optimizer.step()
-                    alpha = log_alpha.exp().item()
-
-        # update the target networks
-        if global_step % args.target_network_frequency == 0:
-            for param, target_param in zip(qfs.parameters(), qf_targets.parameters()):
-                target_param.data.copy_(
-                    args.tau * param.data + (1 - args.tau) * target_param.data
-                )
-
-        # log training stats
-        if global_step % 100 == 0:
-            writer.add_scalar(
-                "losses/qf1_values", qf1_a_values_t.mean().item(), global_step
-            )
-            writer.add_scalar(
-                "losses/qf2_values", qf2_a_values_t.mean().item(), global_step
-            )
-            writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
-            writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
-            writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
-            writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-            writer.add_scalar("losses/alpha", alpha, global_step)
-            print("SPS:", int(global_step / (time.time() - start_time)))
-            writer.add_scalar(
-                "charts/SPS",
-                int(global_step / (time.time() - start_time)),
-                global_step,
-            )
-            if args.autotune:
-                writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
     envs.close()
     writer.close()
