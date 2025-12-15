@@ -1,16 +1,17 @@
 import json, uuid, random, math
 
 EXPERIMENT_CONFIGS = {
-    "slide": dict(env_id="FetchSlideDense-v4", policy_lr=1e-3, q_lr=2e-3, gamma=0.97,  tau=0.002, batch_size=256, dihedral_N=16, reg_rep_N=128),
-    "pick":  dict(env_id="FetchPickAndPlaceDense-v4", policy_lr=6e-4, q_lr=5e-4, gamma=0.99, tau=0.005, batch_size=256, dihedral_N=16, reg_rep_N=64),
-    "push":  dict(env_id="FetchPushDense-v4", policy_lr=4e-4, q_lr=1e-3, gamma=0.957, tau=0.005, batch_size=256, dihedral_N=16, reg_rep_N=64),
+    "pick":  dict(env_id="FetchPickAndPlaceDense-v4", policy_lr=6e-4, q_lr=5e-4, gamma=0.99,  tau=0.005, batch_size=256, dihedral_N=16, reg_rep_N=64),
+    "slide": dict(env_id="FetchSlideDense-v4",       policy_lr=1e-3, q_lr=2e-3, gamma=0.97,  tau=0.002, batch_size=256, dihedral_N=16, reg_rep_N=128),
 }
 
-# how tight?
-N_PER_TASK = 30
-SIGMA_LR   = 0.45   # log-jitter: ~x/÷1.6 typical, rarely > x/÷3
-SIGMA_TAU  = 0.45
-SIGMA_GAMMA = 0.008
+# --- sweep size ---
+N_PER_TASK = 40          # 60 pick + 60 slide = 120 trials (nice for a 0-119 array)
+
+# --- jitter scales (tuneable) ---
+SIGMA_LR    = 0.60       # broader than before
+SIGMA_TAU   = 0.60
+SIGMA_GAMMA = 0.015      # broader gamma search for harder tasks
 
 def clip(x, lo, hi): return max(lo, min(hi, x))
 
@@ -21,30 +22,39 @@ def log_jitter(x, sigma, lo, hi):
 def jitter_gamma(g):
     return clip(g + random.gauss(0.0, SIGMA_GAMMA), 0.94, 0.999)
 
-batch = []
-for exp, base in EXPERIMENT_CONFIGS.items():
-    for _ in range(N_PER_TASK):
-        params = {
-            "policy_lr": log_jitter(base["policy_lr"], SIGMA_LR, 1e-5, 3e-3),
-            "q_lr":      log_jitter(base["q_lr"],      SIGMA_LR, 1e-5, 3e-3),
-            "tau":       log_jitter(base["tau"],       SIGMA_TAU, 1e-4, 2e-2),
-            "gamma":     jitter_gamma(base["gamma"]),
-            "batch_size": random.choice([128, 256]),            # keep tight
-            "dihedral_N": base["dihedral_N"],                   # fixed
-            "reg_rep_N":  base["reg_rep_N"],                    # fixed (or random.choice([64,128]))
-        }
+def main():
+    batch = []
+    for exp, base in EXPERIMENT_CONFIGS.items():
+        for _ in range(N_PER_TASK):
+            # Wider search for pick/slide: include capacity + symmetry as knobs
+            dihedral_N = random.choice([8, 16]) if exp == "slide" else random.choice([4, 8, 16])
+            reg_rep_N  = random.choice([64, 128]) if exp == "pick" else random.choice([128, 192])
 
-        batch.append({
-            "trial_uid": str(uuid.uuid4()),
-            "exp": exp,
-            "env_id": base["env_id"],
-            "params": params,
-            "seed": random.choice([1, 2]),  # optional: two-seed stability
-        })
+            params = {
+                "policy_lr":  log_jitter(base["policy_lr"], SIGMA_LR, 1e-5, 3e-3),
+                "q_lr":       log_jitter(base["q_lr"],      SIGMA_LR, 1e-5, 3e-3),
+                "tau":        log_jitter(base["tau"],       SIGMA_TAU, 1e-4, 2e-2),
+                "gamma":      jitter_gamma(base["gamma"]),
+                "batch_size": random.choice([128, 256, 512]),
+                "dihedral_N": dihedral_N,
+                "reg_rep_N":  reg_rep_N,
+            }
 
-with open("refine_batch.jsonl", "w") as f:
-    for row in batch:
-        f.write(json.dumps(row) + "\n")
+            batch.append({
+                "trial_uid": str(uuid.uuid4()),
+                "exp": exp,
+                "env_id": base["env_id"],
+                "params": params,
+                "seed": random.choice([1, 2]),  # keep 2 seeds for stability signal
+            })
 
-print("Wrote refine_batch.jsonl with", len(batch), "trials")
+    out = "pick_slide_sweep.jsonl"
+    with open(out, "w") as f:
+        for row in batch:
+            f.write(json.dumps(row) + "\n")
+
+    print("Wrote", out, "with", len(batch), "trials")
+
+if __name__ == "__main__":
+    main()
 
