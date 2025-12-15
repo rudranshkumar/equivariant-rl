@@ -17,8 +17,8 @@ include = "bulletarm_baselines"
 from = "BulletArm"
 
 [[tool.poetry.packages]]
-include = "cleanrl_utils"
-from = "CleanRL"
+include = "escnn"
+from = "."
 
 [tool.poetry.group.bulletarm.dependencies]
 GitPython = "*"
@@ -39,6 +39,14 @@ tensorboard = "*"
 torch = "^2.2.0"
 gymnasium = "^1.2.0"
 
+[tool.poetry.group.escnn.dependencies]
+py3nj = "*"
+
+
+[tool.poetry.dependencies]
+tyro = "^0.9.35"
+gymnasium = {extras = ["mujoco"], version = "^1.2.2"}
+wandb = "^0.23.1"
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
