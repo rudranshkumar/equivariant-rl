@@ -91,6 +91,8 @@ class Args:
     """The number of regular rep features in the channel space for the hidden MLP layers"""
     eval_n_episodes: int = 25
     """Number of evaluation episodes in a test"""
+    eval_interval: int = 100_000
+    """Period of evaluations"""
 
 class FetchObsWrapper(gym.ObservationWrapper):
     """
@@ -405,9 +407,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
     av_r = 0
     r_num = 0
-    write_interval=1000
-    eval_step = eval_interval
-    write_step = write_interval
+    eval_step = args.eval_interval
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.seed)
@@ -520,14 +520,14 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
         # ---- EVALUATION BLOCK ----
-        if global_step > 0 and global_step >= eval_step:
+        if global_step > 0 and global_step + 1 >= eval_step:
             eval_return = evaluate_policy(actor, eval_env, device, n_episodes=args.eval_n_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 
             writer.add_scalar("charts/eval_return", eval_return, global_step)
             print(f"[step {global_step}] eval_return = {eval_return:.3f}", flush=True)
 
-            eval_step += eval_interval
+            eval_step += args.eval_interval
             writer.flush()
 
 
