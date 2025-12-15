@@ -45,7 +45,7 @@ class Args:
     # RL / SAC
     total_timesteps: int = 20_000
     num_envs: int = 5
-    buffer_size: int = int(1e6)
+    buffer_size: int = int(1e5)
     gamma: float = 0.99
     tau: float = 1e-2
     batch_size: int = 64
@@ -550,7 +550,7 @@ if __name__ == "__main__":
                     done=dones_t[j].numpy(),
                 )
                 transition = normalize_transition(transition)
-                rb.add(transition, augment=False)
+                rb.add(transition)
 
             states_t = copy.copy(next_states_t)
             obs_t = copy.copy(next_obs_t)
