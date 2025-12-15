@@ -1,12 +1,15 @@
 
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_ataripy
 import os
+os.environ["SDL_VIDEODRIVER"] = "dummy"
 import random
 import time
 from dataclasses import dataclass
 
 import gymnasium as gym
 import ale_py
+
+gym.register_envs(ale_py)
 import numpy as np
 import torch
 import torch.nn as nn
@@ -48,6 +51,12 @@ class Args:
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
+
+    log_interval: int = 1000
+    """log training statistics every N environment steps"""
+
+    compile: bool = False
+    """if toggled, use torch.compile on networks (PyTorch 2+)"""
     # Algorithm specific arguments
     env_id: str = "ALE/Breakout-v5"
     """the id of the environment"""
@@ -252,8 +261,11 @@ if __name__ == "__main__":
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    if hasattr(torch, 'set_float32_matmul_precision'):
+        torch.set_float32_matmul_precision('high')
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
+    torch.backends.cudnn.benchmark = not args.torch_deterministic
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
