@@ -721,6 +721,7 @@ if __name__ == "__main__":
                     global_step,
                 )
                 if args.autotune:
+                    writer.add_scalar("charts/alpha_value", alpha, global_step)
                     writer.add_scalar(
                         "losses/alpha_loss", alpha_loss.item(), global_step
                     )
