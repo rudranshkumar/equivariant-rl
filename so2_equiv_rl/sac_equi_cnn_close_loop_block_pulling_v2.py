@@ -349,7 +349,7 @@ class Actor(torch.nn.Module):
 
         log_std = conv_out[:, self.action_dim :]
         log_std = torch.tanh(log_std)
-        log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)
+        log_std = torch.clamp(log_std, min=LOG_STD_MIN, max=LOG_STD_MAX)
         return mean, log_std
 
     def get_action(self, obs):
