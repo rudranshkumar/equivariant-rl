@@ -21,8 +21,8 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export VECLIB_MAXIMUM_THREADS=1
 
-BATCH=/path/to/pick_slide_sweep.jsonl
-OUTDIR=/path/to/results_pick_slide_sweep
+BATCH=/home/klukasd/project/equivariant-rl/pick_slide_sweep.jsonl
+OUTDIR=/home/klukasd/project/equivariant-rl/results_ps_sweep
 
 python run_one_trial.py \
   --batch "$BATCH" \

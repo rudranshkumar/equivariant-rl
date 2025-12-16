@@ -294,7 +294,7 @@ def evaluate_policy(actor, eval_env, device, n_episodes: int = 10) -> float:
 
 def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
     best_eval_return = -float("inf")
-    eval_interval = 50_000
+    eval_interval = 25_000
 
     #args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -479,7 +479,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
 
 
         # ---- EVALUATION BLOCK ----
-        if global_step > 0 and global_step >= eval_step:
+        if global_step > 0 and global_step >= eval_step or global_step + 1 >= args.total_timesteps:
             eval_return = evaluate_policy(actor, eval_env, device, n_episodes=args.eval_n_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 

@@ -91,7 +91,7 @@ class Args:
     """The number of regular rep features in the channel space for the hidden MLP layers"""
     eval_n_episodes: int = 25
     """Number of evaluation episodes in a test"""
-    eval_interval: int = 100_000
+    eval_interval: int = 25_000
     """Period of evaluations"""
 
 class FetchObsWrapper(gym.ObservationWrapper):
@@ -520,7 +520,7 @@ def train_and_eval(args: Args, trial: optuna.Trial | None = None) -> float:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
         # ---- EVALUATION BLOCK ----
-        if global_step > 0 and global_step + 1 >= eval_step:
+        if global_step > 0 and global_step + 1 >= eval_step or global_step + 1 >= args.total_timesteps:
             eval_return = evaluate_policy(actor, eval_env, device, n_episodes=args.eval_n_episodes)
             best_eval_return = max(best_eval_return, eval_return)
 
